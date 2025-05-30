@@ -6,7 +6,11 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
-const parser = new Parser();
+const parser = new Parser({
+  customFields: {
+    item: [['dc:creator', 'creator']] // noteのRSSでdc:creatorを正しく取得
+  }
+});
 
 app.get('/rss', async (req, res) => {
   try {
@@ -17,7 +21,7 @@ app.get('/rss', async (req, res) => {
       : [];
 
     if (!feedUrl) {
-      return res.status(400).json({ error: 'RSS_FEED_URLが設定されていません' });
+      return res.status(400).send('Error: RSS_FEED_URL is not set');
     }
 
     // RSSフィードを取得
@@ -26,31 +30,54 @@ app.get('/rss', async (req, res) => {
     // 複数ユーザーを除外
     const filteredItems = feed.items.filter(
       item =>
-        !excludedUsers.some(user => 
-          item.creator?.includes(user) || 
-          item.link.includes(user)
+        !excludedUsers.some(user =>
+          (item.creator && item.creator.includes(user)) ||
+          (item.link && item.link.includes(user))
         )
     );
 
-    // CORSヘッダーを設定
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // RSS XMLを生成
+    let rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>${feed.title || 'Filtered Note RSS'}</title>
+    <link>${feed.link || feedUrl}</link>
+    <description>${feed.description || 'Filtered RSS feed from note'}</description>
+    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+    <language>ja</language>`;
 
-    // フィルタリング済みのフィードをJSONで返す
-    res.json({
-      title: feed.title,
-      description: feed.description || '',
-      link: feed.link,
-      items: filteredItems.map(item => ({
-        title: item.title,
-        link: item.link,
-        author: item.creator || 'Unknown',
-        pubDate: item.pubDate,
-        description: item.description || ''
-      }))
+    filteredItems.forEach(item => {
+      rss += `
+    <item>
+      <title><![CDATA[${item.title || ''}]]></title>
+      <link>${item.link || ''}</link>
+      <guid isPermaLink="true">${item.link || ''}</guid>
+      <pubDate>${item.pubDate || new Date().toUTCString()}</pubDate>
+      <dc:creator><![CDATA[${item.creator || 'Unknown'}]]></dc:creator>
+      <description><![CDATA[${item.description || ''}]]></description>
+    </item>`;
     });
+
+    rss += `
+  </channel>
+</rss>`;
+
+    // RSS形式でレスポンスを返す
+    res.setHeader('Content-Type', 'application/rss+xml');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.send(rss);
   } catch (error) {
-    res.status(500).json({ error: 'RSSフィードの取得に失敗しました', details: error.message });
+    res.status(500).send(`Error fetching RSS feed: ${error.message}`);
   }
 });
+
+
+const PORT = process.env.PORT || 3000;
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
 
 module.exports = app;
