@@ -1,0 +1,10 @@
+{
+    "version": 2,
+    "framework": null,
+    "functions": {
+      "api/rss.js": {
+        "memory": 128,
+        "maxDuration": 10
+      }
+    }
+  }
