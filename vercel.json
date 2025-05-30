@@ -1,10 +1,15 @@
 {
     "version": 2,
-    "framework": null,
-    "functions": {
-        "api/rss.js": {
-            "memory": 128,
-            "maxDuration": 10
-        }
-    }
-}
+    "builds": [
+      {
+        "src": "api/rss.js",
+        "use": "@vercel/node"
+      }
+    ],
+    "routes": [
+      {
+        "src": "/api/rss",
+        "dest": "/api/rss.js"
+      }
+    ]
+  }
