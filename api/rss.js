@@ -1,74 +1,87 @@
 const Parser = require('rss-parser');
-const express = require('express');
-const dotenv = require('dotenv');
+const parser = new Parser();
+require('dotenv').config();
 
-// .envファイルから環境変数を読み込む
-dotenv.config();
-
-const app = express();
-const parser = new Parser({
-  customFields: {
-    item: [['dc:creator', 'creator']] // noteのRSSでdc:creatorを正しく取得
+module.exports = async (req, res) => {
+  // GET メソッドのみを許可
+  if (req.method !== 'GET') {
+    res.status(405).send('Method Not Allowed');
+    return;
   }
-});
 
-app.get('/rss', async (req, res) => {
+  // 環境変数の取得
+  const feedUrl = process.env.RSS_FEED_URL;
+  const excludeUsers = process.env.EXCLUDE_USERS
+    ? process.env.EXCLUDE_USERS.split(',').map(user => user.trim().toLowerCase())
+    : [];
+
+  // 環境変数のバリデーション
+  if (!feedUrl) {
+    res.status(500).send('Error: RSS_FEED_URL is not defined in .env');
+    return;
+  }
+
   try {
-    // 環境変数からRSSフィードURLと除外ユーザーIDを取得
-    const feedUrl = process.env.RSS_FEED_URL;
-    const excludedUsers = process.env.EXCLUDED_USERS
-      ? process.env.EXCLUDED_USERS.split(',').map(user => user.trim())
-      : [];
-
-    if (!feedUrl) {
-      return res.status(400).send('Error: RSS_FEED_URL is not set');
-    }
-
-    // RSSフィードを取得
+    // RSS フィードを取得
     const feed = await parser.parseURL(feedUrl);
 
-    // 複数ユーザーを除外
-    const filteredItems = feed.items.filter(
-      item =>
-        !excludedUsers.some(user =>
-          (item.creator && item.creator.includes(user)) ||
-          (item.link && item.link.includes(user))
-        )
-    );
-
-    // RSS XMLを生成
-    let rss = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
-  <channel>
-    <title>${feed.title || 'Filtered Note RSS'}</title>
-    <link>${feed.link || feedUrl}</link>
-    <description>${feed.description || 'Filtered RSS feed from note'}</description>
-    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
-    <language>ja</language>`;
-
-    filteredItems.forEach(item => {
-      rss += `
-    <item>
-      <title><![CDATA[${item.title || ''}]]></title>
-      <link>${item.link || ''}</link>
-      <guid isPermaLink="true">${item.link || ''}</guid>
-      <pubDate>${item.pubDate || new Date().toUTCString()}</pubDate>
-      <dc:creator><![CDATA[${item.creator || 'Unknown'}]]></dc:creator>
-      <description><![CDATA[${item.description || ''}]]></description>
-    </item>`;
+    // 除外ユーザの投稿をフィルタリング
+    const filteredItems = feed.items.filter(item => {
+      if (!item.creator && !item.author) return true; // creator または author がない場合は保持
+      const creator = (item.creator || item.author || '').toLowerCase();
+      return !excludeUsers.includes(creator);
     });
 
-    rss += `
+    // RSS フィードを生成
+    res.setHeader('Content-Type', 'application/rss+xml');
+    res.status(200).send(generateRSSFeed(filteredItems, feed));
+  } catch (error) {
+    // エラーハンドリング
+    res.status(500).send(`Error fetching RSS: ${error.message}`);
+  }
+};
+
+function generateRSSFeed(items, feed) {
+  // XML エスケープ関数
+  const escapeXML = (str) => {
+    if (!str) return '';
+    return str.replace(/[<>&'"]/g, (char) => {
+      switch (char) {
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '&': return '&amp;';
+        case "'": return '&apos;';
+        case '"': return '&quot;';
+        default: return char;
+      }
+    });
+  };
+
+  // RSS フィードを生成
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>${escapeXML(feed.title || 'Filtered Note RSS Feed')}</title>
+    <link>${escapeXML(feed.link || 'https://note.com')}</link>
+    <description>${escapeXML(feed.description || 'RSS feed excluding specified users')}</description>
+    <language>ja</language>
+    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>`;
+
+  items.forEach(item => {
+    xml += `
+    <item>
+      <title>${escapeXML(item.title || '')}</title>
+      <link>${escapeXML(item.link || '')}</link>
+      <description>${escapeXML(item.contentSnippet || '')}</description>
+      <pubDate>${escapeXML(item.pubDate || '')}</pubDate>
+      <guid>${escapeXML(item.link || '')}</guid>
+      ${item.creator || item.author ? `<author>${escapeXML(item.creator || item.author)}</author>` : ''}
+    </item>`;
+  });
+
+  xml += `
   </channel>
 </rss>`;
 
-    // RSS形式でレスポンスを返す
-    res.setHeader('Content-Type', 'application/rss+xml');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.send(rss);
-  } catch (error) {
-    res.status(500).send(`Error fetching RSS feed: ${error.message}`);
-  }
-});
-
-module.exports = app;
+  return xml;
+}
